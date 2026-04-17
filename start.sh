@@ -1,0 +1,2 @@
+#!/bin/sh
+exec gunicorn server:app --bind "0.0.0.0:8080" --workers 2 --timeout 300 --log-level info
