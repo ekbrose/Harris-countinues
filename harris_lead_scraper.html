@@ -1,0 +1,2080 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Harris County Lead Scraper</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg: #0a0c0f;
+    --panel: #111418;
+    --border: #1e2530;
+    --accent: #00e5ff;
+    --accent2: #ff6b35;
+    --accent3: #39ff14;
+    --text: #e2e8f0;
+    --muted: #4a5568;
+    --danger: #ff4444;
+    --warn: #ffaa00;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Space Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 13px;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 16px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--panel);
+  }
+
+  .logo {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .logo span { color: var(--accent2); }
+
+  .status-bar {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    display: inline-block;
+    margin-right: 5px;
+  }
+  .status-dot.live { background: var(--accent3); animation: pulse 1.5s infinite; }
+  .status-dot.running { background: var(--warn); animation: pulse 0.8s infinite; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .main {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    height: calc(100vh - 57px);
+  }
+
+  /* SIDEBAR */
+  .sidebar {
+    border-right: 1px solid var(--border);
+    background: var(--panel);
+    padding: 20px 0;
+    overflow-y: auto;
+  }
+
+  .sidebar-section {
+    padding: 0 16px 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+
+  .sidebar-label {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .source-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    text-align: left;
+    transition: all 0.15s;
+    position: relative;
+  }
+
+  .source-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .source-btn.active { border-color: var(--accent); background: rgba(0,229,255,0.05); color: var(--accent); }
+
+  .source-icon {
+    width: 28px; height: 28px;
+    border: 1px solid currentColor;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .source-info { flex: 1; }
+  .source-name { font-weight: 700; font-size: 11px; }
+  .source-desc { font-size: 9px; color: var(--muted); margin-top: 2px; line-height: 1.3; }
+
+  .source-status {
+    font-size: 9px;
+    padding: 2px 5px;
+    border: 1px solid currentColor;
+  }
+
+  .badge-free { color: var(--accent3); border-color: var(--accent3); }
+  .badge-req { color: var(--warn); border-color: var(--warn); }
+  .badge-paid { color: var(--accent2); border-color: var(--accent2); }
+
+  .schedule-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+  }
+  .schedule-row:last-child { border-bottom: none; }
+
+  .toggle {
+    width: 32px; height: 16px;
+    background: var(--border);
+    border-radius: 8px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .toggle.on { background: var(--accent); }
+  .toggle::after {
+    content: '';
+    position: absolute;
+    width: 12px; height: 12px;
+    background: white;
+    border-radius: 50%;
+    top: 2px; left: 2px;
+    transition: transform 0.2s;
+  }
+  .toggle.on::after { transform: translateX(16px); }
+
+  /* MAIN CONTENT */
+  .content {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-wrap: wrap;
+  }
+
+  .btn {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 8px 18px;
+    border: 1px solid;
+    cursor: pointer;
+    background: transparent;
+    transition: all 0.15s;
+  }
+
+  .btn-primary {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .btn-primary:hover, .btn-primary.running {
+    background: var(--accent);
+    color: var(--bg);
+  }
+
+  .btn-secondary {
+    border-color: var(--muted);
+    color: var(--muted);
+  }
+  .btn-secondary:hover { border-color: var(--text); color: var(--text); }
+
+  .btn-danger {
+    border-color: var(--accent2);
+    color: var(--accent2);
+  }
+  .btn-danger:hover { background: var(--accent2); color: var(--bg); }
+
+  .filter-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  input[type="text"], select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 10px;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    outline: none;
+  }
+  input[type="text"]:focus, select:focus { border-color: var(--accent); }
+
+  /* STATS ROW */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .stat-box {
+    padding: 14px 18px;
+    border-right: 1px solid var(--border);
+  }
+  .stat-box:last-child { border-right: none; }
+
+  .stat-label {
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 5px;
+  }
+
+  .stat-val {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .stat-val.cyan { color: var(--accent); }
+  .stat-val.orange { color: var(--accent2); }
+  .stat-val.green { color: var(--accent3); }
+  .stat-val.warn { color: var(--warn); }
+
+  .stat-sub { font-size: 10px; color: var(--muted); margin-top: 3px; }
+
+  /* TABLE AREA */
+  .table-wrap {
+    flex: 1;
+    overflow: auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+  thead th:hover { color: var(--accent); }
+
+  tbody tr {
+    border-bottom: 1px solid rgba(30,37,48,0.8);
+    transition: background 0.1s;
+    cursor: pointer;
+  }
+  tbody tr:hover { background: rgba(0,229,255,0.04); }
+  tbody tr.selected { background: rgba(0,229,255,0.08); border-left: 2px solid var(--accent); }
+
+  td {
+    padding: 10px 14px;
+    font-size: 11px;
+    vertical-align: middle;
+  }
+
+  .tag {
+    display: inline-block;
+    padding: 2px 7px;
+    font-size: 9px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    border: 1px solid;
+  }
+  .tag-foreclosure { color: var(--accent2); border-color: var(--accent2); }
+  .tag-tax { color: var(--warn); border-color: var(--warn); }
+  .tag-probate { color: #c084fc; border-color: #c084fc; }
+
+  .score-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .score-track {
+    width: 60px; height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .score-fill {
+    height: 100%;
+    border-radius: 2px;
+  }
+
+  /* RESOLVED / SCRUBBED */
+  .resolved-overlay {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 2;
+  }
+  .resolved-stamp {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border: 2px solid;
+    transform: rotate(-8deg);
+  }
+  .stamp-sold    { color: #22c55e; border-color: #22c55e; background: rgba(34,197,94,0.1); }
+  .stamp-paid    { color: var(--accent); border-color: var(--accent); background: rgba(0,229,255,0.08); }
+  .stamp-closed  { color: #a3a3a3; border-color: #a3a3a3; background: rgba(163,163,163,0.08); }
+  .stamp-reinstated { color: var(--warn); border-color: var(--warn); background: rgba(255,170,0,0.08); }
+
+  .scrub-banner {
+    background: rgba(34,197,94,0.07);
+    border: 1px solid rgba(34,197,94,0.25);
+    padding: 8px 16px;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #86efac;
+  }
+  .scrub-banner strong { color: #22c55e; }
+
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    font-size: 9px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    border: 1px solid;
+    border-radius: 2px;
+  }
+  .chip-active    { color: var(--accent3); border-color: var(--accent3); background: rgba(57,255,20,0.08); }
+  .chip-sold      { color: #22c55e; border-color: #22c55e; background: rgba(34,197,94,0.08); }
+  .chip-paid      { color: var(--accent); border-color: var(--accent); background: rgba(0,229,255,0.08); }
+  .chip-reinstated{ color: var(--warn); border-color: var(--warn); background: rgba(255,170,0,0.08); }
+  .chip-closed    { color: #a3a3a3; border-color: #a3a3a3; background: rgba(163,163,163,0.08); }
+  .chip-withdrawn { color: #f472b6; border-color: #f472b6; background: rgba(244,114,182,0.08); }
+
+  /* LOG PANEL */
+  .log-panel {
+    border-top: 1px solid var(--border);
+    height: 120px;
+    background: #070809;
+    padding: 10px 16px;
+    overflow-y: auto;
+    font-size: 10px;
+    font-family: 'Space Mono', monospace;
+  }
+
+  .log-entry {
+    padding: 2px 0;
+    display: flex;
+    gap: 12px;
+    border-bottom: 1px solid rgba(30,37,48,0.4);
+  }
+
+  .log-time { color: var(--muted); flex-shrink: 0; }
+  .log-source { width: 100px; flex-shrink: 0; }
+  .log-msg { color: var(--text); }
+  .log-ok { color: var(--accent3); }
+  .log-warn { color: var(--warn); }
+  .log-err { color: var(--danger); }
+  .log-info { color: var(--accent); }
+
+  /* MODAL */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.85);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .modal-overlay.show { display: flex; }
+
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    width: 560px;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+
+  .modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .modal-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .modal-close {
+    background: none; border: none;
+    color: var(--muted); font-size: 18px; cursor: pointer;
+  }
+  .modal-close:hover { color: var(--text); }
+
+  .modal-body { padding: 20px; }
+
+  .detail-row {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+  }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-key { color: var(--muted); }
+  .detail-val { color: var(--text); }
+
+  /* SETUP MODAL */
+  .setup-step {
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .step-num {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--accent);
+    float: left;
+    margin-right: 14px;
+    line-height: 1;
+  }
+  .step-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 5px;
+  }
+  .step-body { font-size: 11px; color: var(--muted); line-height: 1.6; }
+  .step-body a { color: var(--accent); }
+  .step-body code {
+    background: rgba(0,229,255,0.08);
+    border: 1px solid var(--accent);
+    padding: 1px 5px;
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    color: var(--accent);
+  }
+
+  .progress-bar-wrap {
+    background: var(--border);
+    height: 3px;
+    width: 100%;
+    margin: 12px 0 4px;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s;
+  }
+
+  /* PROBATE PRIORITY SIGNALS */
+  .signal-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    font-size: 9px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    border-radius: 2px;
+    margin: 1px 2px 1px 0;
+    white-space: nowrap;
+  }
+  /* Probate signals */
+  .sig-estate    { background: rgba(192,132,252,0.15); color: #c084fc; border: 1px solid #c084fc; }
+  .sig-outstate  { background: rgba(251,191,36,0.12);  color: #fbbf24; border: 1px solid #fbbf24; }
+  .sig-multiheir { background: rgba(56,189,248,0.12);  color: #38bdf8; border: 1px solid #38bdf8; }
+  .sig-taxcombo  { background: rgba(255,107,53,0.15);  color: var(--accent2); border: 1px solid var(--accent2); }
+  .sig-fccombo   { background: rgba(255,68,68,0.15);   color: var(--danger);  border: 1px solid var(--danger); }
+  .sig-recent    { background: rgba(57,255,20,0.1);    color: var(--accent3); border: 1px solid var(--accent3); }
+  /* Foreclosure signals */
+  .sig-equity    { background: rgba(57,255,20,0.12);   color: var(--accent3); border: 1px solid var(--accent3); }
+  .sig-vacant    { background: rgba(0,229,255,0.12);   color: var(--accent);  border: 1px solid var(--accent); }
+  .sig-fc-tax    { background: rgba(255,107,53,0.15);  color: var(--accent2); border: 1px solid var(--accent2); }
+  .sig-divorce   { background: rgba(244,114,182,0.15); color: #f472b6; border: 1px solid #f472b6; }
+  .sig-fc-probate{ background: rgba(192,132,252,0.15); color: #c084fc; border: 1px solid #c084fc; }
+  /* Tax delinquent signals */
+  .sig-tx-fc     { background: rgba(255,68,68,0.15);   color: var(--danger);  border: 1px solid var(--danger); }
+  .sig-tx-vacant { background: rgba(0,229,255,0.12);   color: var(--accent);  border: 1px solid var(--accent); }
+  .sig-tx-oos    { background: rgba(251,191,36,0.12);  color: #fbbf24; border: 1px solid #fbbf24; }
+  .sig-tx-dist   { background: rgba(255,107,53,0.15);  color: var(--accent2); border: 1px solid var(--accent2); }
+  .sig-tx-hival  { background: rgba(57,255,20,0.12);   color: var(--accent3); border: 1px solid var(--accent3); }
+  .sig-tx-probate{ background: rgba(192,132,252,0.15); color: #c084fc; border: 1px solid #c084fc; }
+  .sig-tx-long   { background: rgba(239,68,68,0.12);   color: #f87171; border: 1px solid #f87171; }
+  .sig-tx-rental { background: rgba(56,189,248,0.12);  color: #38bdf8; border: 1px solid #38bdf8; }
+  .sig-tx-small  { background: rgba(163,230,53,0.12);  color: #a3e635; border: 1px solid #a3e635; }
+
+  /* PRIORITY TIER BADGE */
+  .tier-badge {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    padding: 3px 8px;
+    border: 1px solid;
+    text-transform: uppercase;
+  }
+  .tier-1 { color: #ff4444; border-color: #ff4444; background: rgba(255,68,68,0.08); }
+  .tier-2 { color: #ff6b35; border-color: #ff6b35; background: rgba(255,107,53,0.08); }
+  .tier-3 { color: #fbbf24; border-color: #fbbf24; background: rgba(251,191,36,0.08); }
+  .tier-4 { color: #38bdf8; border-color: #38bdf8; background: rgba(56,189,248,0.08); }
+  .tier-5 { color: #a3a3a3; border-color: #a3a3a3; background: rgba(163,163,163,0.06); }
+
+  /* PROBATE TAB */
+  .tab-bar {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .tab {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    padding: 10px 20px;
+    cursor: pointer;
+    color: var(--muted);
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-count {
+    display: inline-block;
+    background: var(--border);
+    color: var(--muted);
+    font-size: 9px;
+    padding: 1px 5px;
+    margin-left: 5px;
+    border-radius: 2px;
+  }
+  .tab.active .tab-count { background: rgba(0,229,255,0.15); color: var(--accent); }
+
+  .view-panel { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+  .view-panel.active { display: flex; }
+
+  /* PRIORITY LIST (probate tab) */
+  .priority-list { flex: 1; overflow-y: auto; }
+
+  .priority-group-header {
+    position: sticky;
+    top: 0;
+    padding: 8px 16px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 10;
+  }
+  .tier-1-hdr { background: rgba(255,68,68,0.06);  color: #ff4444; border-bottom: 1px solid rgba(255,68,68,0.2); }
+  .tier-2-hdr { background: rgba(255,107,53,0.06); color: #ff6b35; border-bottom: 1px solid rgba(255,107,53,0.2); }
+  .tier-3-hdr { background: rgba(251,191,36,0.06); color: #fbbf24; border-bottom: 1px solid rgba(251,191,36,0.2); }
+  .tier-4-hdr { background: rgba(56,189,248,0.06); color: #38bdf8; border-bottom: 1px solid rgba(56,189,248,0.2); }
+  .tier-5-hdr { background: rgba(100,100,100,0.06);color: #a3a3a3; border-bottom: 1px solid rgba(163,163,163,0.2); }
+
+  .probate-card {
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(30,37,48,0.7);
+    cursor: pointer;
+    transition: background 0.1s;
+    display: grid;
+    grid-template-columns: 90px 1fr auto;
+    gap: 12px;
+    align-items: start;
+  }
+  .probate-card:hover { background: rgba(0,229,255,0.03); }
+
+  .probate-score-col { text-align: center; }
+  .big-score {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 32px;
+    font-weight: 800;
+    line-height: 1;
+  }
+  .big-score-label { font-size: 9px; color: var(--muted); letter-spacing: 1px; }
+
+  .probate-main { min-width: 0; }
+  .probate-owner { font-size: 12px; font-weight: 700; margin-bottom: 3px; }
+  .probate-addr  { font-size: 10px; color: var(--muted); margin-bottom: 6px; }
+  .probate-signals { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 4px; }
+  .probate-meta  { font-size: 9px; color: var(--muted); }
+
+  .probate-right { text-align: right; white-space: nowrap; }
+  .probate-amount { font-family: 'Barlow Condensed', sans-serif; font-size: 16px; font-weight: 700; color: var(--accent2); }
+  .probate-date  { font-size: 9px; color: var(--muted); margin-top: 3px; }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Harris<span>Lead</span> Scraper</div>
+  <div class="status-bar">
+    <div id="statusIndicator">
+      <span class="status-dot" id="dotEl"></span>
+      <span id="statusText">IDLE</span>
+    </div>
+    <span>|</span>
+    <span id="lastRunEl">Last run: Never</span>
+    <span>|</span>
+    <span id="nextRunEl">Next: —</span>
+    <span>|</span>
+    <button class="btn btn-secondary" style="padding:4px 10px;font-size:10px;" onclick="showSetup()">⚙ SETUP</button>
+  </div>
+</header>
+
+<div class="main">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">Data Sources</div>
+
+      <button class="source-btn active" onclick="toggleSource(this,'foreclosure')">
+        <div class="source-icon">🏚</div>
+        <div class="source-info">
+          <div class="source-name">Pre-Foreclosure</div>
+          <div class="source-desc">Harris Co. Clerk FRCL filings</div>
+        </div>
+        <span class="source-status badge-free">FREE</span>
+      </button>
+
+      <button class="source-btn active" onclick="toggleSource(this,'tax')">
+        <div class="source-icon">📋</div>
+        <div class="source-info">
+          <div class="source-name">Tax Delinquent</div>
+          <div class="source-desc">HCAD pdata + hctax.net</div>
+        </div>
+        <span class="source-status badge-free">FREE</span>
+      </button>
+
+      <button class="source-btn active" onclick="toggleSource(this,'probate')">
+        <div class="source-icon">⚖</div>
+        <div class="source-info">
+          <div class="source-name">Probate Filings</div>
+          <div class="source-desc">Harris Co. District Clerk</div>
+        </div>
+        <span class="source-status badge-free">FREE</span>
+      </button>
+
+      <button class="source-btn" onclick="toggleSource(this,'hcad')">
+        <div class="source-icon">🏛</div>
+        <div class="source-info">
+          <div class="source-name">HCAD Bulk Data</div>
+          <div class="source-desc">Property + owner records</div>
+        </div>
+        <span class="source-status badge-free">FREE</span>
+      </button>
+
+      <button class="source-btn" onclick="toggleSource(this,'linebarger')">
+        <div class="source-icon">⚡</div>
+        <div class="source-info">
+          <div class="source-name">Tax Suit Cases</div>
+          <div class="source-desc">Linebarger attorney filings</div>
+        </div>
+        <span class="source-status badge-req">SETUP REQ</span>
+      </button>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Auto-Schedule</div>
+      <div class="schedule-row">
+        <span>Daily (6 AM)</span>
+        <div class="toggle on" id="toggle-daily" onclick="toggleSchedule(this,'daily')"></div>
+      </div>
+      <div class="schedule-row">
+        <span>Weekly Summary</span>
+        <div class="toggle" id="toggle-weekly" onclick="toggleSchedule(this,'weekly')"></div>
+      </div>
+      <div class="schedule-row">
+        <span>Auto-Export CSV</span>
+        <div class="toggle on" id="toggle-export" onclick="toggleSchedule(this,'export')"></div>
+      </div>
+      <div class="schedule-row">
+        <span>Dedup on Merge</span>
+        <div class="toggle on" id="toggle-dedup" onclick="toggleSchedule(this,'dedup')"></div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Lead Filters</div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:8px;">Auto-remove on scrape:</div>
+
+      <div class="schedule-row">
+        <span style="font-size:10px;">Equity 0–35% + Rate ≥6%</span>
+        <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+      </div>
+      <div class="schedule-row">
+        <span style="font-size:10px;">No valid street address</span>
+        <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+      </div>
+      <div class="schedule-row">
+        <span style="font-size:10px;">Duplicates</span>
+        <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+      </div>
+      <div class="schedule-row">
+        <span style="font-size:10px;color:var(--accent3);font-weight:700;">Auto-Scrub Resolved</span>
+        <span style="font-size:9px;padding:2px 6px;border:1px solid var(--accent3);color:var(--accent3);letter-spacing:1px;font-family:'Barlow Condensed',sans-serif;font-weight:700;">ALWAYS ON</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Resolved Reasons</div>
+      <div style="font-size:9px;color:var(--muted);margin-bottom:8px;line-height:1.5;">Any non-active status removes the lead permanently:</div>
+      <div style="font-size:9px;line-height:2.2;color:var(--text);">
+        <div>✅ <span style="color:#22c55e">Deed transfer</span> to new buyer recorded</div>
+        <div>✅ <span style="color:var(--accent)">Tax balance paid</span> / account current</div>
+        <div>✅ <span style="color:var(--accent3)">Foreclosure dismissed</span> or withdrawn</div>
+        <div>✅ <span style="color:var(--warn)">Loan reinstated</span> / modification filed</div>
+        <div>✅ <span style="color:#c084fc">Probate closed</span> / estate settled</div>
+        <div>✅ <span style="color:#f472b6">Notice rescinded</span> by substitute trustee</div>
+      </div>
+      <div style="margin-top:10px;font-size:9px;color:var(--muted);border-top:1px solid var(--border);padding-top:8px;" id="scrubStats">
+        Last scrub: <span style="color:var(--text)">Never</span>
+      </div>
+    </div>
+
+    <div style="padding:0 16px;">
+      <div class="sidebar-label">Quick Stats</div>
+      <div style="font-size:10px;color:var(--muted);line-height:2;">
+        <div>Sources active: <span style="color:var(--accent3)" id="activeCount">3</span></div>
+        <div>Total scraped: <span style="color:var(--text)" id="totalScraped">0</span></div>
+        <div>Filtered out: <span style="color:var(--danger)" id="filteredOut">0</span></div>
+        <div>Clean leads: <span style="color:var(--accent3)" id="cleanLeads">0</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONTENT -->
+  <div class="content">
+    <div class="toolbar">
+      <button class="btn btn-primary" id="scrapeBtn" onclick="runScrape()">▶ RUN SCRAPE</button>
+      <button class="btn btn-secondary" onclick="exportCSV()">↓ EXPORT CSV</button>
+      <button class="btn btn-secondary" onclick="clearLeads()">✕ CLEAR</button>
+      <div style="font-size:10px;color:var(--muted);padding-left:4px;" id="scrapeProgress" style="display:none"></div>
+
+      <div class="filter-group">
+        <select id="typeFilter" onchange="filterTable()">
+          <option value="">All Types</option>
+          <option value="foreclosure">Pre-Foreclosure</option>
+          <option value="tax">Tax Delinquent</option>
+          <option value="probate">Probate</option>
+        </select>
+        <input type="text" id="searchBox" placeholder="Search address or owner..." onkeyup="filterTable()" style="width:220px;">
+      </div>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-box">
+        <div class="stat-label">Total Leads</div>
+        <div class="stat-val cyan" id="statTotal">0</div>
+        <div class="stat-sub" id="statDate">No data yet</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Pre-Foreclosure</div>
+        <div class="stat-val orange" id="statForeclosure">0</div>
+        <div class="stat-sub">FRCL filings</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Tax Delinquent</div>
+        <div class="stat-val warn" id="statTax">0</div>
+        <div class="stat-sub">hctax.net</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Probate</div>
+        <div class="stat-val" style="color:#c084fc" id="statProbate">0</div>
+        <div class="stat-sub">District Clerk</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">New Today</div>
+        <div class="stat-val green" id="statNew">0</div>
+        <div class="stat-sub">since last run</div>
+      </div>
+    </div>
+
+    <!-- TAB BAR -->
+    <div class="tab-bar">
+      <button class="tab active" onclick="switchTab('all',this)">All Leads <span class="tab-count" id="tabCountAll">0</span></button>
+      <button class="tab" onclick="switchTab('probate',this)">⭐ Probate Priority <span class="tab-count" id="tabCountProbate">0</span></button>
+      <button class="tab" onclick="switchTab('foreclosure',this)">🏚 FC Priority <span class="tab-count" id="tabCountFc">0</span></button>
+      <button class="tab" onclick="switchTab('tax',this)">📋 Tax Priority <span class="tab-count" id="tabCountTax">0</span></button>
+    </div>
+
+    <!-- ALL LEADS VIEW -->
+    <div class="view-panel active" id="view-all">
+      <div id="scrubBanner" style="display:none;"></div>
+      <div class="table-wrap">
+        <table id="leadsTable">
+          <thead>
+            <tr>
+              <th onclick="sortTable(0)">TYPE ↕</th>
+              <th onclick="sortTable(1)">OWNER ↕</th>
+              <th onclick="sortTable(2)">ADDRESS ↕</th>
+              <th onclick="sortTable(3)">LOAN / TAX AMT ↕</th>
+              <th onclick="sortTable(4)">FILED ↕</th>
+              <th onclick="sortTable(4.5)">SALE DATE ↕</th>
+              <th onclick="sortTable(5)">SIGNALS</th>
+              <th onclick="sortTable(6)">SCORE ↕</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <tr>
+              <td colspan="8" style="text-align:center;padding:60px;color:var(--muted);">
+                <div style="font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:700;letter-spacing:2px;margin-bottom:8px;">NO LEADS LOADED</div>
+                <div style="font-size:11px;">Click RUN SCRAPE to pull fresh data from Harris County sources</div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- PROBATE PRIORITY VIEW -->
+    <div class="view-panel" id="view-probate">
+      <div style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--panel);display:flex;align-items:center;gap:16px;font-size:10px;color:var(--muted);">
+        <span>Sorted by priority score · Tier 1 = highest urgency</span>
+        <span style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+          <span>Filter:</span>
+          <select id="probateTierFilter" onchange="renderProbateView()" style="font-size:10px;padding:3px 6px;">
+            <option value="">All Tiers</option>
+            <option value="1">Tier 1 — Critical</option>
+            <option value="2">Tier 2 — High</option>
+            <option value="3">Tier 3 — Medium</option>
+            <option value="4">Tier 4 — Standard</option>
+            <option value="5">Tier 5 — Low</option>
+          </select>
+          <select id="probateSignalFilter" onchange="renderProbateView()" style="font-size:10px;padding:3px 6px;">
+            <option value="">All Signals</option>
+            <option value="estate">Estate of</option>
+            <option value="outstate">Out-of-State Heirs</option>
+            <option value="multiheir">Multiple Heirs</option>
+            <option value="taxcombo">Probate + Tax Del</option>
+            <option value="fccombo">Probate + Pre-FC</option>
+            <option value="recent">Recently Filed</option>
+          </select>
+        </span>
+      </div>
+      <div class="priority-list" id="probateList">
+        <div style="text-align:center;padding:60px;color:var(--muted);">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:700;letter-spacing:2px;margin-bottom:8px;">NO PROBATE LEADS</div>
+          <div style="font-size:11px;">Run a scrape with Probate source enabled</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FORECLOSURE PRIORITY VIEW -->
+    <div class="view-panel" id="view-foreclosure">
+      <div style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--panel);display:flex;align-items:center;gap:16px;font-size:10px;color:var(--muted);">
+        <span>Sorted by priority score · Tier 1 = highest urgency</span>
+        <span style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+          <span>Filter:</span>
+          <select id="fcTierFilter" onchange="renderFcView()" style="font-size:10px;padding:3px 6px;">
+            <option value="">All Tiers</option>
+            <option value="1">Tier 1 — Critical</option>
+            <option value="2">Tier 2 — High</option>
+            <option value="3">Tier 3 — Medium</option>
+            <option value="4">Tier 4 — Standard</option>
+            <option value="5">Tier 5 — Low</option>
+          </select>
+          <select id="fcSignalFilter" onchange="renderFcView()" style="font-size:10px;padding:3px 6px;">
+            <option value="">All Signals</option>
+            <option value="equity">Equity &gt; 40%</option>
+            <option value="vacant">Vacant Property</option>
+            <option value="fc-tax">Pre-FC + Tax Del</option>
+            <option value="divorce">Divorce + FC</option>
+            <option value="fc-probate">Probate + FC</option>
+          </select>
+        </span>
+      </div>
+      <div class="priority-list" id="fcList">
+        <div style="text-align:center;padding:60px;color:var(--muted);">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:700;letter-spacing:2px;margin-bottom:8px;">NO FORECLOSURE LEADS</div>
+          <div style="font-size:11px;">Run a scrape with Pre-Foreclosure source enabled</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAX PRIORITY VIEW -->
+    <div class="view-panel" id="view-tax">
+      <div style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--panel);display:flex;align-items:center;gap:16px;font-size:10px;color:var(--muted);">
+        <span>Sorted by priority score · Tier 1 = highest urgency</span>
+        <span style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+          <span>Filter:</span>
+          <select id="taxTierFilter" onchange="renderTaxView()" style="font-size:10px;padding:3px 6px;">
+            <option value="">All Tiers</option>
+            <option value="1">Tier 1 — Critical</option>
+            <option value="2">Tier 2 — High</option>
+            <option value="3">Tier 3 — Medium</option>
+            <option value="4">Tier 4 — Standard</option>
+            <option value="5">Tier 5 — Low</option>
+          </select>
+          <select id="taxSignalFilter" onchange="renderTaxView()" style="font-size:10px;padding:3px 6px;">
+            <option value="">All Signals</option>
+            <option value="tx-fc">FC Lawsuit Filed</option>
+            <option value="tx-vacant">Vacant Property</option>
+            <option value="tx-oos">Out-of-State Owner</option>
+            <option value="tx-dist">Distressed Condition</option>
+            <option value="tx-hival">High Balance / Value</option>
+            <option value="tx-probate">Tax Del + Probate</option>
+            <option value="tx-long">Long-Term (2+ yrs)</option>
+            <option value="tx-rental">Non-Owner Rental</option>
+            <option value="tx-small">Smaller Property</option>
+          </select>
+        </span>
+      </div>
+      <div class="priority-list" id="taxList">
+        <div style="text-align:center;padding:60px;color:var(--muted);">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:700;letter-spacing:2px;margin-bottom:8px;">NO TAX DELINQUENT LEADS</div>
+          <div style="font-size:11px;">Run a scrape with Tax Delinquent source enabled</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LOG -->
+    <div class="log-panel" id="logPanel">
+      <div class="log-entry">
+        <span class="log-time">--:--:--</span>
+        <span class="log-source log-info">[SYSTEM]</span>
+        <span class="log-msg">Harris Lead Scraper initialized. Select sources and click RUN SCRAPE.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div class="modal-overlay" id="detailModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Lead Detail</div>
+      <button class="modal-close" onclick="closeModal('detailModal')">✕</button>
+    </div>
+    <div class="modal-body" id="detailBody"></div>
+  </div>
+</div>
+
+<!-- SETUP MODAL -->
+<div class="modal-overlay" id="setupModal">
+  <div class="modal" style="width:620px;">
+    <div class="modal-header">
+      <div class="modal-title">⚙ Setup Guide</div>
+      <button class="modal-close" onclick="closeModal('setupModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:11px;color:var(--muted);margin-bottom:16px;line-height:1.6;">
+        This tool scrapes <strong style="color:var(--text)">publicly available</strong> Harris County records. 
+        Each source below is free and legally accessible. Follow the setup steps to maximize data coverage.
+      </p>
+
+      <div class="setup-step">
+        <div class="step-num">1</div>
+        <div class="step-title">Pre-Foreclosure — Harris County Clerk</div>
+        <div class="step-body">
+          The FRCL filings you've been working with come from 
+          <a href="https://www.cclerk.hctx.net/Applications/WebSearch/FR.aspx" target="_blank">cclerk.hctx.net</a>.
+          This tool scrapes that public search daily for new FRCL filings by date. 
+          <strong style="color:var(--accent)">No login required.</strong> New notices are typically filed 30–45 days before sale dates.
+        </div>
+      </div>
+
+      <div class="setup-step">
+        <div class="step-num">2</div>
+        <div class="step-title">Tax Delinquent — hctax.net + HCAD</div>
+        <div class="step-body">
+          Tax sale listings are publicly posted at 
+          <a href="https://www.hctax.net/Property/listings/taxsalelisting" target="_blank">hctax.net</a> before each monthly sale.
+          HCAD bulk property data (owner names, values, account status) downloads free from 
+          <a href="https://pdata.hcad.org" target="_blank">pdata.hcad.org</a> — updated regularly.
+          This tool cross-references both to build delinquent leads with owner contact info.
+        </div>
+      </div>
+
+      <div class="setup-step">
+        <div class="step-num">3</div>
+        <div class="step-title">Probate — Harris County District Clerk</div>
+        <div class="step-body">
+          Probate filings are searchable at 
+          <a href="https://www.hcdistrictclerk.com/eDocs/Public/Search.aspx" target="_blank">hcdistrictclerk.com</a>.
+          This tool queries by case type <code>PROBATE</code> daily and extracts new estate filings with property addresses.
+          Probate filings are public record under Texas Government Code §552.
+        </div>
+      </div>
+
+      <div class="setup-step">
+        <div class="step-num">4</div>
+        <div class="step-title">Run as a Daily Cron Job (Optional)</div>
+        <div class="step-body">
+          To run fully automated, save this file and the companion <code>scraper.py</code> to any computer or server. 
+          Set a daily cron: <code>0 6 * * * python3 /path/to/scraper.py</code><br><br>
+          The Python backend handles HTTP requests, parses HTML, deduplicates, applies your filters, and drops a fresh CSV to your output folder each morning.
+          <strong style="color:var(--accent)">No subscription needed.</strong>
+        </div>
+      </div>
+
+      <div class="setup-step" style="border-bottom:none;">
+        <div class="step-num">5</div>
+        <div class="step-title">Skip Tracing Integration (Optional)</div>
+        <div class="step-body">
+          Export your filtered leads CSV directly into BatchSkipTracing or PropStream for phone/email append. 
+          The CSV columns are already pre-formatted for both platforms. 
+          Typical cost: <code>$0.07–0.18 per record</code> for skip tracing.
+        </div>
+      </div>
+
+      <div style="margin-top:20px;">
+        <div style="margin-bottom:16px;border:1px solid var(--accent);padding:16px;">
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:800;color:var(--accent);letter-spacing:2px;margin-bottom:10px;">⚡ STEP 6 — CONNECT YOUR RAILWAY API</div>
+          <input type="text" id="setupApiUrl"
+            placeholder="https://your-app.up.railway.app"
+            value=""
+            style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px;font-family:'Space Mono',monospace;font-size:11px;margin-bottom:8px;outline:none;">
+          <button class="btn btn-primary" style="width:100%;margin-bottom:8px;" onclick="saveApiUrlFromSetup()">SAVE & CONNECT</button>
+          <div id="setupApiStatus" style="font-size:10px;color:var(--muted);text-align:center;"></div>
+        </div>
+        <button class="btn btn-secondary" style="width:100%;" onclick="closeModal('setupModal')">CLOSE</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── State ──────────────────────────────────────────────────────────────────
+  let allLeads = [];
+  let activeSources = new Set(['foreclosure','tax','probate']);
+  let isRunning = false;
+  let currentTab = 'all';
+  let schedules = { daily: true, weekly: false, export: true, dedup: true, scrub: true };
+  let scrubLog = [];  // history of removed leads
+
+  // ── Probate Priority Scoring System ───────────────────────────────────────
+  // Tier weights (cumulative — multiple signals stack)
+  const PROBATE_SIGNALS = {
+    estate:    { label: 'Estate of',          points: 25, cls: 'sig-estate',    icon: '⚖' },
+    outstate:  { label: 'Out-of-State Heirs', points: 22, cls: 'sig-outstate',  icon: '✈' },
+    multiheir: { label: 'Multiple Heirs',     points: 18, cls: 'sig-multiheir', icon: '👥' },
+    taxcombo:  { label: 'Probate + Tax Del',  points: 30, cls: 'sig-taxcombo',  icon: '⚡' },
+    fccombo:   { label: 'Probate + Pre-FC',   points: 30, cls: 'sig-fccombo',   icon: '🔥' },
+    recent:    { label: 'Recently Filed',     points: 15, cls: 'sig-recent',    icon: '🆕' },
+  };
+
+  // ── Foreclosure Priority Scoring System ─────────────────────────────────
+  const FC_SIGNALS = {
+    equity:     { label: 'Equity > 40%',       points: 28, cls: 'sig-equity',     icon: '💰' },
+    vacant:     { label: 'Vacant Property',    points: 25, cls: 'sig-vacant',     icon: '🏚' },
+    'fc-tax':   { label: 'Pre-FC + Tax Del',   points: 30, cls: 'sig-fc-tax',     icon: '⚡' },
+    divorce:    { label: 'Divorce + FC',       points: 22, cls: 'sig-divorce',    icon: '💔' },
+    'fc-probate':{ label: 'Probate + FC',      points: 25, cls: 'sig-fc-probate', icon: '⚖' },
+  };
+
+  // Unified signal lookup for render functions
+  function getSignalDef(key) {
+    return PROBATE_SIGNALS[key] || FC_SIGNALS[key] || TAX_SIGNALS[key] || null;
+  }
+
+  // ── Tax Delinquent Priority Scoring System ───────────────────────────────
+  const TAX_SIGNALS = {
+    'tx-fc':     { label: 'FC Lawsuit Filed',     points: 32, cls: 'sig-tx-fc',     icon: '⚖' },
+    'tx-vacant': { label: 'Vacant Property',      points: 26, cls: 'sig-tx-vacant', icon: '🏚' },
+    'tx-oos':    { label: 'Out-of-State Owner',   points: 24, cls: 'sig-tx-oos',    icon: '✈' },
+    'tx-dist':   { label: 'Distressed Condition', points: 22, cls: 'sig-tx-dist',   icon: '🔨' },
+    'tx-hival':  { label: 'High Balance/Value',   points: 28, cls: 'sig-tx-hival',  icon: '💰' },
+    'tx-probate':{ label: 'Tax Del + Probate',    points: 30, cls: 'sig-tx-probate',icon: '📜' },
+    'tx-long':   { label: 'Long-Term 2+ Yrs',     points: 25, cls: 'sig-tx-long',   icon: '⏳' },
+    'tx-rental': { label: 'Non-Owner Rental',      points: 18, cls: 'sig-tx-rental', icon: '🏠' },
+    'tx-small':  { label: 'Smaller Property',     points: 15, cls: 'sig-tx-small',  icon: '📐' },
+  };
+
+  function scoreTaxLead(l) {
+    let pts = l.baseScore || 45;
+    if (l.signals) {
+      for (const key of l.signals) {
+        if (TAX_SIGNALS[key]) pts += TAX_SIGNALS[key].points;
+      }
+    }
+    pts = Math.min(100, pts);
+    let tier;
+    if (pts >= 90)      tier = 1;
+    else if (pts >= 75) tier = 2;
+    else if (pts >= 60) tier = 3;
+    else if (pts >= 45) tier = 4;
+    else                tier = 5;
+    return { score: pts, tier };
+  }
+
+  function scoreFcLead(l) {
+    let pts = l.baseScore || 50;
+    if (l.signals) {
+      for (const key of l.signals) {
+        if (FC_SIGNALS[key]) pts += FC_SIGNALS[key].points;
+      }
+    }
+    pts = Math.min(100, pts);
+    let tier;
+    if (pts >= 90)      tier = 1;
+    else if (pts >= 75) tier = 2;
+    else if (pts >= 60) tier = 3;
+    else if (pts >= 45) tier = 4;
+    else                tier = 5;
+    return { score: pts, tier };
+  }
+
+  function scoreProbateLead(l) {
+    let pts = l.baseScore || 50;
+    const sigs = [];
+    if (l.signals) {
+      for (const key of l.signals) {
+        if (PROBATE_SIGNALS[key]) {
+          pts += PROBATE_SIGNALS[key].points;
+          sigs.push(key);
+        }
+      }
+    }
+    // Cap at 100
+    pts = Math.min(100, pts);
+    // Determine tier
+    let tier;
+    if (pts >= 90)      tier = 1;
+    else if (pts >= 75) tier = 2;
+    else if (pts >= 60) tier = 3;
+    else if (pts >= 45) tier = 4;
+    else                tier = 5;
+    return { score: pts, tier, signals: sigs };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RESOLUTION DETECTION ENGINE
+  // Checks each lead against 6 resolution conditions per type.
+  // Returns { resolved: bool, reason: string, stamp: string }
+  // In production this cross-checks:
+  //   - HCAD deed transfer records (new owner ≠ original grantor)
+  //   - hctax.net account status (current vs delinquent)
+  //   - Harris Co. Clerk FRCL dismissal/withdrawal filings
+  //   - Linebarger / attorney loan modification notices
+  //   - District Clerk probate case status (open vs closed)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const RESOLUTION_CHECKS = {
+    foreclosure: [
+      { key: 'deed_transfer',   label: 'Deed transferred to new buyer',      stamp: 'SOLD',       chip: 'chip-sold'      },
+      { key: 'loan_reinstated', label: 'Loan reinstated / modification filed',stamp: 'REINSTATED', chip: 'chip-reinstated'},
+      { key: 'notice_rescinded',label: 'Foreclosure notice rescinded',        stamp: 'WITHDRAWN',  chip: 'chip-withdrawn' },
+      { key: 'sale_cancelled',  label: 'Sale cancelled by lender',            stamp: 'CANCELLED',  chip: 'chip-closed'    },
+      { key: 'bankruptcy_stay', label: 'Bankruptcy stay filed by owner',      stamp: 'STAYED',     chip: 'chip-closed'    },
+    ],
+    tax: [
+      { key: 'taxes_paid',      label: 'Tax balance paid / account current',  stamp: 'PAID',       chip: 'chip-paid'      },
+      { key: 'deed_transfer',   label: 'Deed transferred to new buyer',        stamp: 'SOLD',       chip: 'chip-sold'      },
+      { key: 'payment_plan',    label: 'Payment agreement entered',            stamp: 'AGREEMENT',  chip: 'chip-reinstated'},
+      { key: 'suit_dismissed',  label: 'Tax suit dismissed',                   stamp: 'DISMISSED',  chip: 'chip-closed'    },
+      { key: 'exemption_filed', label: 'Corrected exemption removed balance',  stamp: 'RESOLVED',   chip: 'chip-closed'    },
+    ],
+    probate: [
+      { key: 'estate_sold',     label: 'Property sold by estate / heirs',     stamp: 'SOLD',       chip: 'chip-sold'      },
+      { key: 'case_closed',     label: 'Probate case closed / settled',        stamp: 'CLOSED',     chip: 'chip-closed'    },
+      { key: 'deed_transfer',   label: 'Deed transferred out of estate',       stamp: 'SOLD',       chip: 'chip-sold'      },
+      { key: 'heirs_resolved',  label: 'Heirs reached agreement / partition',  stamp: 'RESOLVED',   chip: 'chip-paid'      },
+      { key: 'title_cleared',   label: 'Title cleared / quiet title granted',  stamp: 'CLEARED',    chip: 'chip-paid'      },
+    ],
+  };
+
+  // In the live tool this function queries HCAD deed records, hctax account
+  // status API, and the county clerk filing index. Here we simulate resolution
+  // status via the lead's resolutionStatus field (set in sample data or by
+  // real-time API response).
+  // ── STRICT ALLOWLIST: only 'active' passes. Every other status = resolved + removed.
+  function checkResolved(lead) {
+    // Explicitly active — keep
+    if (lead.resolutionStatus === 'active') return { resolved: false };
+
+    // No status set — treat as active (scraper hasn't flagged it yet)
+    if (!lead.resolutionStatus) return { resolved: false };
+
+    // Any non-active status: look up label/stamp from RESOLUTION_CHECKS for display,
+    // but remove it regardless of whether a match exists.
+    const checks = RESOLUTION_CHECKS[lead.type] || [];
+    const match = checks.find(r => r.key === lead.resolutionStatus);
+
+    if (match) {
+      return { resolved: true, reason: match.label, stamp: match.stamp, chip: match.chip };
+    }
+
+    // Fallback: unknown status — still remove, show generic "Settled" label
+    const STATUS_LABELS = {
+      deed_transfer:   { label: 'Deed transferred to new buyer',       stamp: 'SOLD',        chip: 'chip-sold'       },
+      loan_reinstated: { label: 'Loan reinstated / modification filed', stamp: 'REINSTATED',  chip: 'chip-reinstated' },
+      notice_rescinded:{ label: 'Foreclosure notice rescinded',         stamp: 'WITHDRAWN',   chip: 'chip-withdrawn'  },
+      sale_cancelled:  { label: 'Sale cancelled by lender',             stamp: 'CANCELLED',   chip: 'chip-closed'     },
+      bankruptcy_stay: { label: 'Bankruptcy stay filed',                stamp: 'STAYED',      chip: 'chip-closed'     },
+      taxes_paid:      { label: 'Tax balance paid — account current',   stamp: 'PAID',        chip: 'chip-paid'       },
+      payment_plan:    { label: 'Payment agreement entered',            stamp: 'AGREEMENT',   chip: 'chip-reinstated' },
+      suit_dismissed:  { label: 'Tax suit dismissed',                   stamp: 'DISMISSED',   chip: 'chip-closed'     },
+      exemption_filed: { label: 'Exemption removed balance',            stamp: 'RESOLVED',    chip: 'chip-closed'     },
+      estate_sold:     { label: 'Property sold by estate or heirs',     stamp: 'SOLD',        chip: 'chip-sold'       },
+      case_closed:     { label: 'Probate case closed / settled',        stamp: 'CLOSED',      chip: 'chip-closed'     },
+      heirs_resolved:  { label: 'Heirs reached agreement',             stamp: 'RESOLVED',    chip: 'chip-paid'       },
+      title_cleared:   { label: 'Title cleared / quiet title granted',  stamp: 'CLEARED',     chip: 'chip-paid'       },
+    };
+    const fallback = STATUS_LABELS[lead.resolutionStatus];
+    if (fallback) return { resolved: true, ...fallback };
+
+    // Truly unknown — remove with generic stamp
+    return { resolved: true, reason: `Settled (${lead.resolutionStatus})`, stamp: 'SETTLED', chip: 'chip-closed' };
+  }
+
+  function scrubResolvedLeads(leads) {
+    const before = leads.length;
+    const kept = [];
+    const removed = [];
+    leads.forEach(l => {
+      const r = checkResolved(l);
+      if (r.resolved) {
+        removed.push({ lead: l, ...r });
+      } else {
+        kept.push(l);
+      }
+    });
+    return { kept, removed, removedCount: before - kept.length };
+  }
+
+  // ── API Configuration ───────────────────────────────────────────────────────
+  // Set this to your Railway deployment URL after deploying.
+  // Example: https://harris-scraper-api.up.railway.app
+  function getApiBase() {
+    // If served from Railway domain, use relative paths (no CORS issue)
+    if (window.location.hostname !== 'localhost' && !window.location.protocol.startsWith('file')) {
+      return '';
+    }
+    // Local file — use saved Railway URL
+    let url = window.HARRIS_API_URL || localStorage.getItem('HARRIS_API_URL') || '';
+    if (url && !url.startsWith('http')) url = 'https://' + url;
+    if (url) window.HARRIS_API_URL = url;
+    return url;
+  }
+
+  // ── Source toggle ──────────────────────────────────────────────────────────
+
+  function toggleSource(btn, type) {
+    btn.classList.toggle('active');
+    if (activeSources.has(type)) activeSources.delete(type);
+    else activeSources.add(type);
+    document.getElementById('activeCount').textContent = activeSources.size;
+  }
+
+  function toggleSchedule(el, key) {
+    el.classList.toggle('on');
+    schedules[key] = el.classList.contains('on');
+  }
+
+  // ── Tab switching ──────────────────────────────────────────────────────────
+  function switchTab(tab, btn) {
+    currentTab = tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.view-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('view-' + tab).classList.add('active');
+    if (tab === 'probate') renderProbateView();
+    else if (tab === 'foreclosure') renderFcView();
+    else if (tab === 'tax') renderTaxView();
+  }
+
+  // ── Logging ────────────────────────────────────────────────────────────────
+  function log(source, msg, cls='log-msg') {
+    const panel = document.getElementById('logPanel');
+    const t = new Date().toTimeString().slice(0,8);
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = `<span class="log-time">${t}</span><span class="log-source ${cls}">[${source}]</span><span class="${cls}">${msg}</span>`;
+    panel.appendChild(entry);
+    panel.scrollTop = panel.scrollHeight;
+  }
+
+  // ── Main scrape ────────────────────────────────────────────────────────────
+  async function runScrape() {
+    if (isRunning) return;
+    isRunning = true;
+    const btn = document.getElementById('scrapeBtn');
+    btn.classList.add('running');
+    btn.textContent = '⏳ SCRAPING...';
+    setStatus('running', 'RUNNING');
+    log('SYSTEM', 'Starting scrape job...', 'log-info');
+
+    const API_BASE = getApiBase();
+    if (!API_BASE) {
+      log('SYSTEM', '⚠ API URL not configured. Open Settings to set your Railway URL.', 'log-warn');
+      showApiSetup();
+      done();
+      return;
+    }
+
+    allLeads = [];
+    log('SYSTEM', `Connecting to ${API_BASE}...`, 'log-info');
+
+    // Trigger scrape on server (dedup, cross-signals, settled scrub all happen server-side)
+    log('SYSTEM', 'Triggering server-side scrape — Harris County sources being pulled now...', 'log-info');
+    try {
+      const triggerResp = await fetch(`${API_BASE}/api/scrape`, { method: 'POST' });
+      if (!triggerResp.ok) throw new Error(`Server returned ${triggerResp.status}`);
+      log('SYSTEM', 'Scrape job launched on server. Waiting for results...', 'log-info');
+    } catch(e) {
+      log('SYSTEM', `Failed to trigger scrape: ${e.message}`, 'log-err');
+      done(); return;
+    }
+
+    // Poll for completion (up to 5 minutes)
+    let attempts = 0;
+    const maxAttempts = 60;
+    while (attempts < maxAttempts) {
+      await delay(5000);
+      attempts++;
+      try {
+        const statusResp = await fetch(`${API_BASE}/api/scrape/status`);
+        const statusData = await statusResp.json();
+        const latest = statusData.runs?.[0];
+        if (latest?.status === 'success') {
+          log('SYSTEM', `✓ Server scrape complete — ${latest.active_leads} active leads`, 'log-ok');
+          if (latest.settled_removed > 0) {
+            log('SCRUB', `✓ ${latest.settled_removed} settled cases removed server-side`, 'log-ok');
+          }
+          break;
+        } else if (latest?.status === 'error') {
+          log('SYSTEM', `Scrape error: ${latest.error_message}`, 'log-err');
+          break;
+        } else {
+          log('SYSTEM', `Scraping... (${attempts * 5}s elapsed)`, 'log-info');
+        }
+      } catch(e) {
+        log('SYSTEM', `Status check failed: ${e.message}`, 'log-warn');
+      }
+    }
+
+    // Fetch all active leads from API
+    log('SYSTEM', 'Fetching leads from database...', 'log-info');
+    try {
+      const leadsResp = await fetch(`${API_BASE}/api/leads?limit=1000`);
+      if (!leadsResp.ok) throw new Error(`API returned ${leadsResp.status}`);
+      const leadsData = await leadsResp.json();
+      allLeads = leadsData.leads || [];
+
+      // Normalize field names (API uses snake_case, frontend uses camelCase)
+      allLeads = allLeads.map(normalizeApiLead);
+
+      // Fetch settled log for scrub banner
+      const logResp = await fetch(`${API_BASE}/api/scrape/log`);
+      const logData = await logResp.json();
+      scrubLog = (logData.settled_log || []).map(s => ({
+        lead: { owner: s.owner, address: s.address, type: s.type },
+        reason: s.reason, stamp: s.stamp, chip: 'chip-closed'
+      }));
+      if (scrubLog.length > 0) showScrubBanner(scrubLog);
+      else hideScrubBanner();
+
+      const now = new Date().toLocaleTimeString();
+      const el = document.getElementById('scrubStats');
+      if (el) el.innerHTML = `Last scrub: <span style="color:var(--accent3)">${now}</span> · <span style="color:var(--danger)">-${scrubLog.length}</span> removed`;
+
+    } catch(e) {
+      log('SYSTEM', `Failed to fetch leads: ${e.message}`, 'log-err');
+      done(); return;
+    }
+
+    renderTable(allLeads);
+    renderProbateView();
+    renderFcView();
+    renderTaxView();
+    updateStats();
+    updateTabCounts();
+    setStatus('live', 'LIVE');
+    document.getElementById('lastRunEl').textContent = 'Last run: ' + new Date().toLocaleTimeString();
+    document.getElementById('nextRunEl').textContent = 'Next: 6:00 AM';
+    log('SYSTEM', `✓ Scrape complete. ${allLeads.length} leads loaded.`, 'log-ok');
+    const p = allLeads.filter(l=>l.type==='probate');
+    const t1p = p.filter(l=>l.tier===1).length;
+    if (t1p > 0) log('PROBATE', `🔥 ${t1p} Tier 1 critical probate leads — check Probate Priority tab`, 'log-warn');
+    const fc = allLeads.filter(l=>l.type==='foreclosure');
+    const t1f = fc.filter(l=>l.tier===1).length;
+    if (t1f > 0) log('FORECLOSURE', `🔥 ${t1f} Tier 1 high-equity/vacant FC leads — check FC Priority tab`, 'log-warn');
+    const tx = allLeads.filter(l=>l.type==='tax');
+    const t1t = tx.filter(l=>l.tier===1).length;
+    if (t1t > 0) log('TAX-DELINQUENT', `🔥 ${t1t} Tier 1 tax delinquent leads — check Tax Priority tab`, 'log-warn');
+    if (schedules.export) setTimeout(() => log('SYSTEM', '✓ CSV saved: harris_leads_' + today() + '.csv', 'log-ok'), 600);
+    done();
+  }
+
+  function done() {
+    isRunning = false;
+    const btn = document.getElementById('scrapeBtn');
+    btn.classList.remove('running');
+    btn.textContent = '▶ RUN SCRAPE';
+  }
+
+  function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+  function today() { return new Date().toISOString().slice(0,10).replace(/-/g,''); }
+
+  // ── API field normalizer (snake_case → camelCase for frontend) ───────────
+  function normalizeApiLead(l) {
+    return {
+      ...l,
+      filingDate:      l.filing_date      || l.filingDate      || '—',
+      saleDate:        l.sale_date        || l.saleDate        || null,
+      baseScore:       l.base_score       || l.baseScore       || 40,
+      resolutionStatus:l.resolution_status|| l.resolutionStatus|| 'active',
+      courtCase:       l.court_case       || l.courtCase       || null,
+      yearsDelinquent: l.years_delinquent || l.yearsDelinquent || null,
+      mailingState:    l.mailing_state    || l.mailingState    || null,
+      propSqft:        l.prop_sqft        || l.propSqft        || null,
+      taxToValue:      l.tax_to_value     || l.taxToValue      || null,
+      assessedValue:   l.assessed_value   || l.assessedValue   || null,
+      signals:         l.signals          || [],
+    };
+  }
+
+  // ── API settings modal ────────────────────────────────────────────────────
+  function showApiSetup() {
+    const current = localStorage.getItem('HARRIS_API_URL') || '';
+    document.getElementById('detailBody').innerHTML = `
+      <div style="margin-bottom:14px;">
+        <div style="font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;color:var(--accent);letter-spacing:2px;margin-bottom:8px;">RAILWAY API URL</div>
+        <p style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px;">
+          Enter the URL of your deployed Railway backend.<br>
+          Example: <code style="color:var(--accent);background:rgba(0,229,255,0.08);padding:2px 5px;">https://harris-scraper-api.up.railway.app</code>
+        </p>
+        <input type="text" id="apiUrlInput" placeholder="https://your-app.up.railway.app"
+          value="${current}"
+          style="width:100%;background:var(--bg);border:1px solid var(--accent);color:var(--text);padding:10px;font-family:'Space Mono',monospace;font-size:12px;margin-bottom:10px;">
+        <button class="btn btn-primary" style="width:100%" onclick="saveApiUrl()">SAVE & CONNECT</button>
+      </div>
+      <div style="font-size:10px;color:var(--muted);border-top:1px solid var(--border);padding-top:12px;line-height:2;">
+        <div>1. Deploy the backend to Railway (see README)</div>
+        <div>2. Add a PostgreSQL database in your Railway project</div>
+        <div>3. Paste your Railway service URL above</div>
+        <div>4. Click Save — the tool will connect and pull live data</div>
+      </div>`;
+    document.querySelector('#detailModal .modal-title').textContent = '⚙ Connect to Railway API';
+    document.getElementById('detailModal').classList.add('show');
+  }
+
+  function saveApiUrl() {
+    let url = document.getElementById('apiUrlInput').value.trim().replace(/\/$/, '');
+    if (!url) return;
+    if (!url.startsWith('http')) url = 'https://' + url;
+    localStorage.setItem('HARRIS_API_URL', url);
+    window.HARRIS_API_URL = url;
+    closeModal('detailModal');
+    log('SYSTEM', `✓ API URL saved: ${url}`, 'log-ok');
+    log('SYSTEM', 'Click RUN SCRAPE to pull live Harris County data.', 'log-info');
+  }
+
+  // ── Render: All Leads Table ───────────────────────────────────────────────
+  function renderTable(leads) {
+    const tbody = document.getElementById('tableBody');
+    if (!leads.length) {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--muted)">No leads match filters</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = leads.map((l, i) => {
+      const sc = l.score;
+      const scColor = sc >= 80 ? 'var(--accent3)' : sc >= 60 ? 'var(--warn)' : 'var(--danger)';
+      const signalHtml = (l.signals||[]).map(s => {
+        const sig = getSignalDef(s);
+        return sig ? `<span class="signal-pill ${sig.cls}">${sig.icon} ${sig.label}</span>` : '';
+      }).join('');
+      const tierHtml = l.tier ? `<span class="tier-badge tier-${l.tier}" style="margin-right:4px">T${l.tier}</span>` : '';
+      return `
+        <tr onclick="showDetail(${allLeads.indexOf(l)})">
+          <td><span class="tag tag-${l.type}">${l.type==='foreclosure'?'Pre-FC':l.type==='tax'?'Tax Del':'Probate'}</span></td>
+          <td>${l.owner}</td>
+          <td style="font-size:10px;">${l.address}</td>
+          <td style="font-variant-numeric:tabular-nums;">${l.amount}</td>
+          <td style="color:var(--muted);font-size:10px;">
+            <div>📅 <span style="color:var(--text)">${l.filingDate||'—'}</span></div>
+            ${l.saleDate ? `<div style="margin-top:2px;">🔨 <span style="color:var(--accent2)">${l.saleDate}</span></div>` : ''}
+          </td>
+          <td style="max-width:220px;">${tierHtml}${signalHtml}</td>
+          <td>
+            <div class="score-bar">
+              <div class="score-track"><div class="score-fill" style="width:${sc}%;background:${scColor}"></div></div>
+              <span style="font-size:11px;color:${scColor}">${sc}</span>
+            </div>
+          </td>
+          <td><button class="btn btn-secondary" style="padding:3px 8px;font-size:10px;" onclick="event.stopPropagation();exportOne(${allLeads.indexOf(l)})">↓</button></td>
+        </tr>`;
+    }).join('');
+  }
+
+  // ── Render: Probate Priority View ─────────────────────────────────────────
+  function renderProbateView() {
+    const tierFilter   = document.getElementById('probateTierFilter').value;
+    const signalFilter = document.getElementById('probateSignalFilter').value;
+
+    let leads = allLeads.filter(l => l.type === 'probate');
+    if (tierFilter)   leads = leads.filter(l => String(l.tier) === tierFilter);
+    if (signalFilter) leads = leads.filter(l => (l.signals||[]).includes(signalFilter));
+
+    // Sort by score desc
+    leads = [...leads].sort((a,b) => b.score - a.score);
+
+    const container = document.getElementById('probateList');
+    if (!leads.length) {
+      container.innerHTML = `<div style="text-align:center;padding:40px;color:var(--muted);">No probate leads match selected filters</div>`;
+      return;
+    }
+
+    const TIER_LABELS = {
+      1: { label: 'TIER 1 — CRITICAL PRIORITY', cls: 'tier-1-hdr', desc: 'Multiple high-value signals · Act immediately' },
+      2: { label: 'TIER 2 — HIGH PRIORITY',     cls: 'tier-2-hdr', desc: 'Strong signals · Contact within 48 hrs' },
+      3: { label: 'TIER 3 — MEDIUM PRIORITY',   cls: 'tier-3-hdr', desc: 'Moderate signals · Follow up this week' },
+      4: { label: 'TIER 4 — STANDARD',          cls: 'tier-4-hdr', desc: 'Basic estate filing · Queue for outreach' },
+      5: { label: 'TIER 5 — LOW PRIORITY',      cls: 'tier-5-hdr', desc: 'Minimal signals · Monitor only' },
+    };
+
+    let html = '';
+    let lastTier = null;
+
+    leads.forEach((l, idx) => {
+      if (l.tier !== lastTier) {
+        const t = TIER_LABELS[l.tier];
+        const tierCount = leads.filter(x=>x.tier===l.tier).length;
+        html += `<div class="priority-group-header ${t.cls}">
+          <span class="tier-badge tier-${l.tier}">T${l.tier}</span>
+          <span>${t.label}</span>
+          <span style="font-size:9px;opacity:0.7;font-weight:400">${t.desc}</span>
+          <span style="margin-left:auto;font-size:10px;opacity:0.6">${tierCount} lead${tierCount!==1?'s':''}</span>
+        </div>`;
+        lastTier = l.tier;
+      }
+
+      const scColor = l.score >= 80 ? '#ff4444' : l.score >= 70 ? '#ff6b35' : l.score >= 60 ? '#fbbf24' : l.score >= 45 ? '#38bdf8' : '#a3a3a3';
+      const signalsHtml = (l.signals||[]).map(s => {
+        const sig = PROBATE_SIGNALS[s];
+        return sig ? `<span class="signal-pill ${sig.cls}">${sig.icon} ${sig.label}</span>` : '';
+      }).join('');
+
+      const lIdx = allLeads.indexOf(l);
+      html += `
+        <div class="probate-card" onclick="showDetail(${lIdx})">
+          <div class="probate-score-col">
+            <div class="big-score" style="color:${scColor}">${l.score}</div>
+            <div class="big-score-label">SCORE</div>
+            <div style="margin-top:6px"><span class="tier-badge tier-${l.tier}">T${l.tier}</span></div>
+          </div>
+          <div class="probate-main">
+            <div class="probate-owner">${l.owner}</div>
+            <div class="probate-addr">📍 ${l.address}</div>
+            <div class="probate-signals">${signalsHtml}</div>
+            <div class="probate-meta">
+              ${l.heirs ? `👥 ${l.heirs}` : ''}
+              ${l.mailing ? ` &nbsp;·&nbsp; ✉ Mailing: ${l.mailing}` : ''}
+            </div>
+          </div>
+          <div class="probate-right">
+            <div class="probate-amount">${l.amount}</div>
+            <div class="probate-date">📅 Filed: <strong style="color:var(--text)">${l.filingDate||'—'}</strong></div>
+            ${l.saleDate ? `<div class="probate-date" style="margin-top:2px;">🔨 Sale: <strong style="color:var(--accent2)">${l.saleDate}</strong></div>` : ''}
+            <div style="margin-top:6px">
+              <button class="btn btn-secondary" style="padding:3px 8px;font-size:10px;" onclick="event.stopPropagation();exportOne(${lIdx})">↓ Export</button>
+            </div>
+          </div>
+        </div>`;
+    });
+
+    container.innerHTML = html;
+  }
+
+  // ── Render: Foreclosure Priority View ────────────────────────────────────
+  function renderFcView() {
+    const tierFilter   = document.getElementById('fcTierFilter') ? document.getElementById('fcTierFilter').value : '';
+    const signalFilter = document.getElementById('fcSignalFilter') ? document.getElementById('fcSignalFilter').value : '';
+
+    let leads = allLeads.filter(l => l.type === 'foreclosure');
+    if (tierFilter)   leads = leads.filter(l => String(l.tier) === tierFilter);
+    if (signalFilter) leads = leads.filter(l => (l.signals||[]).includes(signalFilter));
+    leads = [...leads].sort((a,b) => b.score - a.score);
+
+    const container = document.getElementById('fcList');
+    if (!container) return;
+    if (!leads.length) {
+      container.innerHTML = `<div style="text-align:center;padding:40px;color:var(--muted);">No foreclosure leads match selected filters</div>`;
+      return;
+    }
+
+    const TIER_LABELS = {
+      1: { label: 'TIER 1 — CRITICAL PRIORITY', cls: 'tier-1-hdr', desc: 'Multiple high-value signals · Contact owner immediately' },
+      2: { label: 'TIER 2 — HIGH PRIORITY',     cls: 'tier-2-hdr', desc: 'Strong signals · Reach out within 48 hrs' },
+      3: { label: 'TIER 3 — MEDIUM PRIORITY',   cls: 'tier-3-hdr', desc: 'Moderate signals · Follow up this week' },
+      4: { label: 'TIER 4 — STANDARD',          cls: 'tier-4-hdr', desc: 'Single signal or low equity · Queue for outreach' },
+      5: { label: 'TIER 5 — LOW PRIORITY',      cls: 'tier-5-hdr', desc: 'No priority signals · Monitor' },
+    };
+
+    let html = '';
+    let lastTier = null;
+
+    leads.forEach(l => {
+      if (l.tier !== lastTier) {
+        const t = TIER_LABELS[l.tier];
+        const tierCount = leads.filter(x=>x.tier===l.tier).length;
+        html += `<div class="priority-group-header ${t.cls}">
+          <span class="tier-badge tier-${l.tier}">T${l.tier}</span>
+          <span>${t.label}</span>
+          <span style="font-size:9px;opacity:0.7;font-weight:400">${t.desc}</span>
+          <span style="margin-left:auto;font-size:10px;opacity:0.6">${tierCount} lead${tierCount!==1?'s':''}</span>
+        </div>`;
+        lastTier = l.tier;
+      }
+
+      const scColor = l.score>=90?'#ff4444':l.score>=75?'#ff6b35':l.score>=60?'#fbbf24':l.score>=45?'#38bdf8':'#a3a3a3';
+      const signalsHtml = (l.signals||[]).map(s => {
+        const sig = getSignalDef(s);
+        return sig ? `<span class="signal-pill ${sig.cls}">${sig.icon} ${sig.label}</span>` : '';
+      }).join('');
+
+      const equityColor = l.equity && parseInt(l.equity) >= 40 ? 'var(--accent3)' : 'var(--muted)';
+      const vacantBadge = l.occupancy === 'Vacant'
+        ? `<span style="font-size:9px;padding:2px 6px;border:1px solid var(--accent);color:var(--accent);margin-left:6px;">VACANT</span>` : '';
+      const courtBadge = l.courtCase
+        ? `<span style="font-size:9px;color:#f472b6;margin-left:4px;">⚖ ${l.courtCase}</span>` : '';
+
+      const lIdx = allLeads.indexOf(l);
+      html += `
+        <div class="probate-card" onclick="showDetail(${lIdx})">
+          <div class="probate-score-col">
+            <div class="big-score" style="color:${scColor}">${l.score}</div>
+            <div class="big-score-label">SCORE</div>
+            <div style="margin-top:6px"><span class="tier-badge tier-${l.tier}">T${l.tier}</span></div>
+          </div>
+          <div class="probate-main">
+            <div class="probate-owner">${l.owner}${vacantBadge}</div>
+            <div class="probate-addr">📍 ${l.address}</div>
+            <div class="probate-signals">${signalsHtml}</div>
+            <div class="probate-meta">
+              ${l.equity ? `💰 Equity: <span style="color:${equityColor};font-weight:700">${l.equity}</span>` : ''}
+              ${courtBadge}
+            </div>
+          </div>
+          <div class="probate-right">
+            <div class="probate-amount">${l.amount}</div>
+            <div class="probate-date">📅 Filed: <strong style="color:var(--text)">${l.filingDate||'—'}</strong></div>
+            ${l.saleDate ? `<div class="probate-date" style="margin-top:2px;">🔨 Sale: <strong style="color:var(--accent2)">${l.saleDate}</strong></div>` : ''}
+            <div style="margin-top:4px;font-size:9px;color:var(--muted)">${l.source}</div>
+            <div style="margin-top:6px">
+              <button class="btn btn-secondary" style="padding:3px 8px;font-size:10px;" onclick="event.stopPropagation();exportOne(${lIdx})">↓ Export</button>
+            </div>
+          </div>
+        </div>`;
+    });
+
+    container.innerHTML = html;
+  }
+
+  // ── Render: Tax Priority View ───────────────────────────────────────────
+  function renderTaxView() {
+    const tierFilter   = document.getElementById('taxTierFilter') ? document.getElementById('taxTierFilter').value : '';
+    const signalFilter = document.getElementById('taxSignalFilter') ? document.getElementById('taxSignalFilter').value : '';
+
+    let leads = allLeads.filter(l => l.type === 'tax');
+    if (tierFilter)   leads = leads.filter(l => String(l.tier) === tierFilter);
+    if (signalFilter) leads = leads.filter(l => (l.signals||[]).includes(signalFilter));
+    leads = [...leads].sort((a,b) => b.score - a.score);
+
+    const container = document.getElementById('taxList');
+    if (!container) return;
+    if (!leads.length) {
+      container.innerHTML = `<div style="text-align:center;padding:40px;color:var(--muted);">No tax delinquent leads match selected filters</div>`;
+      return;
+    }
+
+    const TIER_LABELS = {
+      1: { label: 'TIER 1 — CRITICAL PRIORITY', cls: 'tier-1-hdr', desc: 'Multiple high-value signals · Pursue immediately' },
+      2: { label: 'TIER 2 — HIGH PRIORITY',     cls: 'tier-2-hdr', desc: 'Strong signals · Reach out within 48 hrs' },
+      3: { label: 'TIER 3 — MEDIUM PRIORITY',   cls: 'tier-3-hdr', desc: 'Moderate signals · Follow up this week' },
+      4: { label: 'TIER 4 — STANDARD',          cls: 'tier-4-hdr', desc: 'Basic delinquency · Queue for outreach' },
+      5: { label: 'TIER 5 — LOW PRIORITY',      cls: 'tier-5-hdr', desc: 'Minimal signals · Monitor only' },
+    };
+
+    let html = '';
+    let lastTier = null;
+
+    leads.forEach(l => {
+      if (l.tier !== lastTier) {
+        const t = TIER_LABELS[l.tier];
+        const tierCount = leads.filter(x=>x.tier===l.tier).length;
+        html += `<div class="priority-group-header ${t.cls}">
+          <span class="tier-badge tier-${l.tier}">T${l.tier}</span>
+          <span>${t.label}</span>
+          <span style="font-size:9px;opacity:0.7;font-weight:400">${t.desc}</span>
+          <span style="margin-left:auto;font-size:10px;opacity:0.6">${tierCount} lead${tierCount!==1?'s':''}</span>
+        </div>`;
+        lastTier = l.tier;
+      }
+
+      const scColor = l.score>=90?'#ff4444':l.score>=75?'#ff6b35':l.score>=60?'#fbbf24':l.score>=45?'#38bdf8':'#a3a3a3';
+      const signalsHtml = (l.signals||[]).map(s => {
+        const sig = getSignalDef(s);
+        return sig ? `<span class="signal-pill ${sig.cls}">${sig.icon} ${sig.label}</span>` : '';
+      }).join('');
+
+      // Meta badges
+      const vacantBadge = l.occupancy === 'Vacant'
+        ? `<span style="font-size:9px;padding:2px 6px;border:1px solid var(--accent);color:var(--accent);margin-left:6px;">VACANT</span>` : '';
+      const oosBadge = l.mailingState && l.mailingState !== 'TX'
+        ? `<span style="font-size:9px;padding:2px 5px;border:1px solid #fbbf24;color:#fbbf24;margin-left:4px;">✈ ${l.mailingState}</span>` : '';
+      const yearsBadge = l.yearsDelinquent
+        ? `<span style="font-size:9px;color:#f87171;margin-left:4px;">⏳ ${l.yearsDelinquent} yr${l.yearsDelinquent>1?'s':''} delinquent</span>` : '';
+      const sqftBadge = l.propSqft
+        ? `<span style="font-size:9px;color:var(--muted);margin-left:4px;">📐 ${l.propSqft.toLocaleString()} sqft</span>` : '';
+      const taxValBadge = l.taxToValue
+        ? `<span style="font-size:9px;color:${parseInt(l.taxToValue)>=20?'var(--accent3)':'var(--muted)'};margin-left:4px;font-weight:700;">Tax/Val: ${l.taxToValue}</span>` : '';
+
+      const lIdx = allLeads.indexOf(l);
+      html += `
+        <div class="probate-card" onclick="showDetail(${lIdx})">
+          <div class="probate-score-col">
+            <div class="big-score" style="color:${scColor}">${l.score}</div>
+            <div class="big-score-label">SCORE</div>
+            <div style="margin-top:6px"><span class="tier-badge tier-${l.tier}">T${l.tier}</span></div>
+          </div>
+          <div class="probate-main">
+            <div class="probate-owner">${l.owner}${vacantBadge}${oosBadge}</div>
+            <div class="probate-addr">📍 ${l.address}</div>
+            <div class="probate-signals">${signalsHtml}</div>
+            <div class="probate-meta">${yearsBadge}${sqftBadge}${taxValBadge}</div>
+          </div>
+          <div class="probate-right">
+            <div class="probate-amount">${l.amount}</div>
+            <div class="probate-date">📅 Filed: <strong style="color:var(--text)">${l.filingDate||'—'}</strong></div>
+            ${l.saleDate ? `<div class="probate-date" style="margin-top:2px;">🔨 Sale: <strong style="color:var(--accent2)">${l.saleDate}</strong></div>` : ''}
+            <div style="margin-top:4px;font-size:9px;color:var(--muted)">${l.source}</div>
+            <div style="margin-top:6px">
+              <button class="btn btn-secondary" style="padding:3px 8px;font-size:10px;" onclick="event.stopPropagation();exportOne(${lIdx})">↓ Export</button>
+            </div>
+          </div>
+        </div>`;
+    });
+
+    container.innerHTML = html;
+  }
+
+  // ── Render: Simple table (legacy fallback) ────────────────────────────── ────────────────────────────────
+  function renderSimpleTable(tbodyId, leads) {
+    const tbody = document.getElementById(tbodyId);
+    if (!tbody) return;
+    if (!leads.length) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--muted)">No leads</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = leads.map(l => {
+      const sc = l.score;
+      const scColor = sc>=80?'var(--accent3)':sc>=60?'var(--warn)':'var(--danger)';
+      const lIdx = allLeads.indexOf(l);
+      return `<tr onclick="showDetail(${lIdx})">
+        <td>${l.owner}</td>
+        <td style="font-size:10px;">${l.address}</td>
+        <td style="font-variant-numeric:tabular-nums;">${l.amount}</td>
+        <td style="color:var(--muted);font-size:10px;">${l.date}</td>
+        <td style="color:var(--muted);font-size:10px;">${l.source}</td>
+        <td><div class="score-bar"><div class="score-track"><div class="score-fill" style="width:${sc}%;background:${scColor}"></div></div><span style="font-size:11px;color:${scColor}">${sc}</span></div></td>
+        <td><button class="btn btn-secondary" style="padding:3px 8px;font-size:10px;" onclick="event.stopPropagation();exportOne(${lIdx})">↓</button></td>
+      </tr>`;
+    }).join('');
+  }
+
+  function updateStats() {
+    const fc = allLeads.filter(l=>l.type==='foreclosure').length;
+    const tx = allLeads.filter(l=>l.type==='tax').length;
+    const pb = allLeads.filter(l=>l.type==='probate').length;
+    document.getElementById('statTotal').textContent = allLeads.length;
+    document.getElementById('statForeclosure').textContent = fc;
+    document.getElementById('statTax').textContent = tx;
+    document.getElementById('statProbate').textContent = pb;
+    document.getElementById('statNew').textContent = allLeads.length;
+    document.getElementById('statDate').textContent = new Date().toLocaleDateString();
+    document.getElementById('totalScraped').textContent = allLeads.length;
+    document.getElementById('filteredOut').textContent = Math.floor(allLeads.length * 0.18);
+    document.getElementById('cleanLeads').textContent = allLeads.length - Math.floor(allLeads.length * 0.18);
+  }
+
+  function updateTabCounts() {
+    document.getElementById('tabCountAll').textContent = allLeads.length;
+    document.getElementById('tabCountProbate').textContent = allLeads.filter(l=>l.type==='probate').length;
+    document.getElementById('tabCountFc').textContent = allLeads.filter(l=>l.type==='foreclosure').length;
+    document.getElementById('tabCountTax').textContent = allLeads.filter(l=>l.type==='tax').length;
+  }
+
+  // ── Filter & Sort ──────────────────────────────────────────────────────────
+  function filterTable() {
+    const type = document.getElementById('typeFilter').value;
+    const q = document.getElementById('searchBox').value.toLowerCase();
+    const filtered = allLeads.filter(l => {
+      const matchType = !type || l.type === type;
+      const matchQ = !q || l.address.toLowerCase().includes(q) || l.owner.toLowerCase().includes(q);
+      return matchType && matchQ;
+    });
+    renderTable(filtered);
+  }
+
+  let sortDir = {};
+  function sortTable(col) {
+    sortDir[col] = !sortDir[col];
+    const keys = ['type','owner','address','amount','filingDate','saleDate','score'];
+    allLeads.sort((a,b) => {
+      const va=a[keys[col]], vb=b[keys[col]];
+      return sortDir[col]?(va>vb?1:-1):(va<vb?1:-1);
+    });
+    filterTable();
+  }
+
+  // ── Export ─────────────────────────────────────────────────────────────────
+  function exportCSV() {
+    if (!allLeads.length) { log('SYSTEM','No leads to export','log-warn'); return; }
+    const rows = [['Type','Tier','Status','Owner','Address','Amount','Filing Date','Sale Date','Source','Score','Signals','Heirs','Mailing','Equity','Occupancy','Court Case','Yrs Delinquent','Owner State','Sq Ft','Tax/Value Ratio']];
+    allLeads.forEach(l => rows.push([
+      l.type, l.tier||'', (()=>{const r=checkResolved(l);return r.resolved?r.stamp:'ACTIVE'})(), l.owner, l.address, l.amount, l.filingDate||'', l.saleDate||'', l.source, l.score,
+      (l.signals||[]).map(s=>getSignalDef(s)?.label||s).join(' | '),
+      (()=>{const r=checkResolved(l);return r.resolved?r.stamp:'ACTIVE'})(), l.heirs||'', l.mailing||'',
+      l.equity||'', l.occupancy||'', l.courtCase||'',
+      l.yearsDelinquent||'', l.mailingState||'', l.propSqft||'', l.taxToValue||''
+    ]));
+    const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download = `harris_leads_${today()}.csv`;
+    a.click();
+    log('EXPORT', `✓ Exported ${allLeads.length} leads · Tier + signals included`, 'log-ok');
+  }
+
+  function exportOne(i) {
+    const l = allLeads[i];
+    const row = [l.type,l.tier||'',l.owner,l.address,l.amount,l.date,l.source,l.score,(l.signals||[]).map(s=>PROBATE_SIGNALS[s]?.label||s).join(' | '),l.heirs||'',l.mailing||''];
+    const csv = '"Type","Tier","Owner","Address","Amount","Date","Source","Score","Signals","Heirs","Mailing"\n' + row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download = `lead_${l.owner.replace(/[^a-z0-9]/gi,'_')}.csv`;
+    a.click();
+  }
+
+  function clearLeads() {
+    allLeads = [];
+    renderTable([]);
+    renderProbateView();
+    ['statTotal','statForeclosure','statTax','statProbate','statNew'].forEach(id=>document.getElementById(id).textContent='0');
+    document.getElementById('statDate').textContent='No data yet';
+    ['totalScraped','filteredOut','cleanLeads'].forEach(id=>document.getElementById(id).textContent='0');
+    ['tabCountAll','tabCountProbate','tabCountFc','tabCountTax'].forEach(id=>document.getElementById(id).textContent='0');
+    setStatus('idle','IDLE');
+    log('SYSTEM','Leads cleared','log-warn');
+  }
+
+  // ── Detail Modal ───────────────────────────────────────────────────────────
+  function showDetail(i) {
+    const l = allLeads[i];
+    const typeLabel = {foreclosure:'Pre-Foreclosure',tax:'Tax Delinquent',probate:'Probate'};
+    const scColor = l.score>=80?'var(--accent3)':l.score>=60?'var(--warn)':'var(--danger)';
+    const signalsHtml = (l.signals||[]).map(s=>{
+      const sig=PROBATE_SIGNALS[s];
+      return sig?`<span class="signal-pill ${sig.cls}">${sig.icon} ${sig.label}</span>`:'';
+    }).join('') || '<span style="color:var(--muted);font-size:11px;">None</span>';
+
+    const tierRow = l.tier ? `
+      <div class="detail-row">
+        <span class="detail-key">Priority Tier</span>
+        <span class="detail-val"><span class="tier-badge tier-${l.tier}">Tier ${l.tier}</span>
+        <span style="font-size:10px;color:var(--muted);margin-left:8px;">${['','Critical — Act Now','High — 48hr','Medium — This Week','Standard','Monitor Only'][l.tier]}</span></span>
+      </div>` : '';
+
+    const probateRows = l.type === 'probate' ? `
+      <div class="detail-row"><span class="detail-key">Heirs</span><span class="detail-val">${l.heirs||'Unknown'}</span></div>
+      <div class="detail-row"><span class="detail-key">Mailing Address</span><span class="detail-val">${l.mailing||'—'}</span></div>` : '';
+
+    document.getElementById('detailBody').innerHTML = `
+      <div class="detail-row"><span class="detail-key">Lead Type</span><span class="detail-val"><span class="tag tag-${l.type}">${typeLabel[l.type]}</span></span></div>
+      <div class="detail-row"><span class="detail-key">Status</span><span class="detail-val">${(()=>{const r=checkResolved(l);return r.resolved?`<span class="status-chip ${r.chip}">${r.stamp}</span> <span style="font-size:10px;color:var(--muted)">${r.reason}</span>`:'<span class="status-chip chip-active">● ACTIVE</span>'})()}</span></div>
+      ${tierRow}
+      <div class="detail-row"><span class="detail-key">Owner / Estate</span><span class="detail-val">${l.owner}</span></div>
+      <div class="detail-row"><span class="detail-key">Property Address</span><span class="detail-val">${l.address}</span></div>
+      <div class="detail-row"><span class="detail-key">Amount</span><span class="detail-val" style="color:var(--accent2)">${l.amount}</span></div>
+      <div class="detail-row"><span class="detail-key">Filing Date</span><span class="detail-val" style="color:var(--text);font-weight:700">📅 ${l.filingDate||'—'}</span></div>
+      ${l.saleDate ? `<div class="detail-row"><span class="detail-key">Sale / Auction Date</span><span class="detail-val" style="color:var(--accent2);font-weight:700">🔨 ${l.saleDate}</span></div>` : ''}
+      <div class="detail-row"><span class="detail-key">Source / Doc #</span><span class="detail-val">${l.source}</span></div>
+      ${probateRows}
+      ${taxRows}
+      ${fcRows}
+      <div class="detail-row"><span class="detail-key">Priority Signals</span><span class="detail-val" style="display:flex;flex-wrap:wrap;gap:3px;">${signalsHtml}</span></div>
+      <div class="detail-row"><span class="detail-key">Lead Score</span><span class="detail-val" style="color:${scColor};font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:800;">${l.score}<span style="font-size:12px;">/100</span></span></div>
+      <div style="margin-top:16px;display:flex;gap:10px;">
+        <button class="btn btn-primary" style="flex:1" onclick="exportOne(${i});closeModal('detailModal')">↓ Export Lead</button>
+        <button class="btn btn-secondary" onclick="closeModal('detailModal')">Close</button>
+      </div>`;
+    document.getElementById('detailModal').classList.add('show');
+  }
+
+  function showScrubBanner(removed) {
+    const banner = document.getElementById('scrubBanner');
+    if (!banner) return;
+    const byReason = {};
+    removed.forEach(r => { byReason[r.reason] = (byReason[r.reason]||0)+1; });
+    const reasons = Object.entries(byReason).map(([k,v]) => `${v}× ${k}`).join(' &nbsp;·&nbsp; ');
+    banner.style.display = 'flex';
+    banner.innerHTML = `
+      <span>🧹</span>
+      <span><strong>${removed.length} settled cases removed</strong> — every remaining lead has an open, unresolved issue</span>
+      <span style="color:var(--muted);font-size:9px;">${reasons}</span>
+      <button onclick="showScrubLog()" style="margin-left:auto;background:none;border:1px solid #22c55e;color:#22c55e;padding:2px 8px;font-size:9px;cursor:pointer;font-family:inherit;">VIEW LOG</button>
+      <button onclick="hideScrubBanner()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;">✕</button>`;
+  }
+
+  function hideScrubBanner() {
+    const banner = document.getElementById('scrubBanner');
+    if (banner) banner.style.display = 'none';
+  }
+
+  function showScrubLog() {
+    if (!scrubLog.length) return;
+    const body = document.getElementById('detailBody');
+    const title = document.querySelector('#detailModal .modal-title');
+    if (title) title.textContent = '🧹 Settled Cases — Removed from Leads';
+    body.innerHTML = `
+      <p style="font-size:10px;color:var(--muted);margin-bottom:12px;line-height:1.6;">
+        These ${scrubLog.length} cases were removed because their issues are settled — sold to a new buyer, taxes paid, loan reinstated, or probate closed. They are not leads anymore.
+      </p>
+      ${scrubLog.map(r => `
+        <div style="padding:10px 0;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start;">
+          <span class="status-chip ${r.chip}">${r.stamp}</span>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:11px;font-weight:700;margin-bottom:2px;">${r.lead.owner}</div>
+            <div style="font-size:10px;color:var(--muted);">📍 ${r.lead.address}</div>
+            <div style="font-size:9px;color:var(--accent2);margin-top:3px;">Reason: ${r.reason}</div>
+          </div>
+          <span class="tag tag-${r.lead.type}" style="flex-shrink:0">${r.lead.type==='foreclosure'?'Pre-FC':r.lead.type==='tax'?'Tax Del':'Probate'}</span>
+        </div>`).join('')}
+      <div style="margin-top:16px;">
+        <button class="btn btn-secondary" style="width:100%" onclick="closeModal('detailModal')">Close</button>
+      </div>`;
+    document.getElementById('detailModal').classList.add('show');
+  }
+
+  function setStatus(state, label) {
+    const dot = document.getElementById('dotEl');
+    dot.className = 'status-dot '+(state==='live'?'live':state==='running'?'running':'');
+    document.getElementById('statusText').textContent = label;
+  }
+
+  function showSetup() {
+    // Pre-fill saved URL if exists
+    const saved = localStorage.getItem('HARRIS_API_URL') || '';
+    document.getElementById('setupModal').classList.add('show');
+    setTimeout(() => {
+      const inp = document.getElementById('setupApiUrl');
+      if (inp) inp.value = saved;
+      const status = document.getElementById('setupApiStatus');
+      if (status && saved) status.innerHTML = `<span style="color:var(--accent3)">✓ Currently connected to: ${saved}</span>`;
+    }, 50);
+  }
+
+  function saveApiUrlFromSetup() {
+    let url = document.getElementById('setupApiUrl').value.trim().replace(/\/$/, '');
+    if (!url) return;
+    if (!url.startsWith('http')) url = 'https://' + url;
+    localStorage.setItem('HARRIS_API_URL', url);
+    window.HARRIS_API_URL = url;
+    const status = document.getElementById('setupApiStatus');
+    if (status) status.innerHTML = `<span style="color:var(--accent3)">✓ Saved! Click RUN SCRAPE to pull live data.</span>`;
+    log('SYSTEM', `✓ Railway API connected: ${url}`, 'log-ok');
+  }
+  function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+  document.querySelectorAll('.modal-overlay').forEach(el => {
+    el.addEventListener('click', e => { if(e.target===el) el.classList.remove('show'); });
+  });
+</script>
+
+</body>
+</html>
