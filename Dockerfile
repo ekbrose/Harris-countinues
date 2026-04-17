@@ -1,6 +1,5 @@
 FROM python:3.11-slim
 
-# Install system deps for lxml + psycopg2
 RUN apt-get update && apt-get install -y \
     gcc \
     libpq-dev \
@@ -13,9 +12,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy scraper + API into same directory so imports work
-COPY scraper/harris_scraper.py .
-COPY api/server.py .
+COPY harris_scraper.py .
+COPY server.py .
 
 EXPOSE 8080
 
